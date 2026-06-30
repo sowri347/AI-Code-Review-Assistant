@@ -122,7 +122,7 @@ Open http://localhost:5173, enter a repo owner and name, then click **Review** o
 | Variable | Description |
 |----------|-------------|
 | `GITHUB_TOKEN` | GitHub PAT with repo read access |
-| `OPENAI_API_KEY` | OpenAI API key |
+| `GEMINI_API_KEY` | GeminiAI API key |
 | `OPENAI_MODEL` | Model name (default: `gpt-4o-mini`) |
 | `CORS_ORIGINS` | Comma-separated allowed origins |
 
