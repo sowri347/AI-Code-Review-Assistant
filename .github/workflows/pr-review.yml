@@ -1,0 +1,114 @@
+name: AI PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install httpx
+
+      - name: Run AI code review
+        env:
+          REVIEW_API_URL: ${{ vars.REVIEW_API_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python - <<'SCRIPT'
+          import json
+          import os
+          import sys
+
+          import httpx
+
+          api_url = os.environ.get("REVIEW_API_URL", "http://localhost:8000")
+          event_path = os.environ.get("GITHUB_EVENT_PATH", "")
+
+          if not event_path:
+              print("Not running in GitHub Actions context")
+              sys.exit(0)
+
+          with open(event_path) as f:
+              event = json.load(f)
+
+          pr = event["pull_request"]
+          repo_full = event["repository"]["full_name"]
+          owner, repo = repo_full.split("/")
+
+          payload = {
+              "owner": owner,
+              "repo": repo,
+              "pr_number": pr["number"],
+          }
+
+          try:
+              resp = httpx.post(f"{api_url}/api/review", json=payload, timeout=120)
+              resp.raise_for_status()
+              report = resp.json()
+          except Exception as exc:
+              print(f"Review failed: {exc}")
+              sys.exit(1)
+
+          findings = report.get("findings", [])
+          quality = report.get("quality", {})
+          summary = report.get("summary", "Review complete.")
+
+          severity_icon = {
+              "critical": "🔴",
+              "high": "🟠",
+              "medium": "🟡",
+              "low": "🔵",
+              "info": "⚪",
+          }
+
+          body_lines = [
+              "## AI Code Review",
+              "",
+              summary,
+              "",
+              f"**Quality Score:** {quality.get('overall_score', 'N/A')}/100",
+              f"**Files analyzed:** {report.get('files_analyzed', 0)}",
+              f"**Findings:** {len(findings)}",
+              "",
+          ]
+
+          if findings:
+              body_lines.append("### Findings")
+              body_lines.append("")
+              for f in findings[:15]:
+                  icon = severity_icon.get(f["severity"], "")
+                  loc = f" (`{f['file']}:{f['line']}`)" if f.get("file") else ""
+                  body_lines.append(f"- {icon} **{f['title']}** [{f['severity']}]{loc}")
+                  if f.get("suggestion"):
+                      body_lines.append(f"  > {f['suggestion']}")
+              body_lines.append("")
+
+          body = "\n".join(body_lines)
+
+          github_token = os.environ["GITHUB_TOKEN"]
+          comment_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{pr['number']}/comments"
+
+          httpx.post(
+              comment_url,
+              headers={
+                  "Authorization": f"Bearer {github_token}",
+                  "Accept": "application/vnd.github+json",
+              },
+              json={"body": body},
+              timeout=30,
+          )
+          print("Review comment posted.")
+          SCRIPT
